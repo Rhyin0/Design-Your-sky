@@ -9,10 +9,11 @@ const SKY_R = 20
 const MODES = { PLACE: 'place', CONNECT: 'connect', MOVE: 'move' }
 const MODE_LABELS = { place: '落星', connect: '连线', move: '移星' }
 const MODE_HINTS = {
-  place: '点击星空选定位置，确认后落星',
+  place: '点击选定位置，确认后落星 · Ctrl+拖拽平移',
   connect: '依次点击两颗星连线',
   move: '拖拽星辰移动位置',
 }
+const DRAG_THRESHOLD = 5
 
 let _id = 0
 const uid = () => ++_id
@@ -101,19 +102,28 @@ function CoordinateAxes({ blur }) {
 
 /* ── invisible click sphere for placing stars ──── */
 
-function ClickSphere({ onPlace, active, pending, onPending, onCancelPending }) {
+function ClickSphere({ active, pending, onPending, onCancelPending }) {
+  const pointerDownPos = useRef(null)
+
   return (
     <mesh
-      onClick={(e) => {
+      onPointerDown={(e) => {
         if (!active) return
+        pointerDownPos.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY }
+      }}
+      onPointerUp={(e) => {
+        if (!active || !pointerDownPos.current) return
+        const dx = e.nativeEvent.clientX - pointerDownPos.current.x
+        const dy = e.nativeEvent.clientY - pointerDownPos.current.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        pointerDownPos.current = null
+        if (dist > DRAG_THRESHOLD) return
         e.stopPropagation()
         const p = e.point.clone().normalize().multiplyScalar(SKY_R)
-        if (!pending) {
-          onPending(p)
-        } else {
+        if (pending) {
           onCancelPending()
-          onPending(p)
         }
+        onPending(p)
       }}
     >
       <sphereGeometry args={[SKY_R, 64, 64]} />
@@ -122,11 +132,17 @@ function ClickSphere({ onPlace, active, pending, onPending, onCancelPending }) {
   )
 }
 
-/* ── pending star preview with confirm/cancel ──── */
+/* ── pending star preview with confirm/cancel + depth slider ── */
 
-function PendingStar({ position, onConfirm, onCancel, glowTex }) {
+function PendingStar({ position, depth, onConfirm, onCancel, onDepthChange, glowTex }) {
+  const actualR = SKY_R * depth
+  const displayPos = useMemo(() => {
+    const v = new THREE.Vector3(position.x, position.y, position.z).normalize().multiplyScalar(actualR)
+    return [v.x, v.y, v.z]
+  }, [position, actualR])
+
   return (
-    <group position={[position.x, position.y, position.z]}>
+    <group position={displayPos}>
       <sprite scale={[3.6, 3.6, 1]}>
         <spriteMaterial
           map={glowTex}
@@ -145,37 +161,53 @@ function PendingStar({ position, onConfirm, onCancel, glowTex }) {
         <meshBasicMaterial wireframe color="#c9a55a" transparent opacity={0.35} />
       </mesh>
       <Html position={[0, -1.2, 0]} center style={{ pointerEvents: 'auto' }}>
-        <div style={{ display: 'flex', gap: '6px', whiteSpace: 'nowrap' }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); onConfirm() }}
-            style={{
-              padding: '4px 12px',
-              fontSize: '11px',
-              border: '1px solid rgba(201,165,90,0.4)',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              background: 'rgba(201,165,90,0.2)',
-              color: '#c9a55a',
-              backdropFilter: 'blur(8px)',
-            }}
-          >
-            确认
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onCancel() }}
-            style={{
-              padding: '4px 12px',
-              fontSize: '11px',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              background: 'rgba(255,255,255,0.05)',
-              color: '#888',
-              backdropFilter: 'blur(8px)',
-            }}
-          >
-            取消
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: '#888', fontSize: '10px' }}>深度</span>
+            <input
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.05"
+              value={depth}
+              onChange={(e) => onDepthChange(Number(e.target.value))}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: '60px', accentColor: '#c9a55a' }}
+            />
+            <span style={{ color: '#666', fontSize: '9px', width: '28px' }}>{Math.round(depth * 100)}%</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); onConfirm() }}
+              style={{
+                padding: '4px 12px',
+                fontSize: '11px',
+                border: '1px solid rgba(201,165,90,0.4)',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                background: 'rgba(201,165,90,0.2)',
+                color: '#c9a55a',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              确认
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onCancel() }}
+              style={{
+                padding: '4px 12px',
+                fontSize: '11px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                background: 'rgba(255,255,255,0.05)',
+                color: '#888',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              取消
+            </button>
+          </div>
         </div>
       </Html>
     </group>
@@ -244,8 +276,8 @@ function SceneContent({
   stars, connections, mode, selected, connectFrom,
   onPlace, onStarClick, onStarPointerDown,
   controlsRef, dragging, onDrag, onDragEnd,
-  pending, onPending, onCancelPending, onConfirmPending,
-  showGrid, axesMode,
+  pending, pendingDepth, onPending, onCancelPending, onConfirmPending, onPendingDepthChange,
+  showGrid, axesMode, ctrlHeld,
 }) {
   const glowTex = useMemo(() => createGlowTexture(), [])
   const { raycaster, camera, gl } = useThree()
@@ -283,6 +315,19 @@ function SceneContent({
     if (controlsRef.current) controlsRef.current.enabled = !dragging
   }, [dragging, controlsRef])
 
+  /* Ctrl key toggles pan mode on OrbitControls */
+  useEffect(() => {
+    if (!controlsRef.current || dragging) return
+    const c = controlsRef.current
+    if (ctrlHeld) {
+      c.enableRotate = false
+      c.enablePan = true
+    } else {
+      c.enableRotate = true
+      c.enablePan = false
+    }
+  }, [ctrlHeld, dragging, controlsRef])
+
   return (
     <>
       <ambientLight intensity={0.15} />
@@ -293,13 +338,13 @@ function SceneContent({
         minDistance={5}
         maxDistance={60}
         enablePan={false}
+        screenSpacePanning
       />
 
       <BackgroundStars />
       {showGrid && <SphereGrid />}
       {axesMode !== 'hidden' && <CoordinateAxes blur={axesMode === 'blur'} />}
       <ClickSphere
-        onPlace={onPlace}
         active={mode === 'place'}
         pending={pending}
         onPending={onPending}
@@ -310,8 +355,10 @@ function SceneContent({
       {pending && (
         <PendingStar
           position={pending}
+          depth={pendingDepth}
           onConfirm={onConfirmPending}
           onCancel={onCancelPending}
+          onDepthChange={onPendingDepthChange}
           glowTex={glowTex}
         />
       )}
@@ -379,6 +426,19 @@ const inputStyle = {
   fontFamily: 'inherit',
 }
 
+const coordInputStyle = {
+  background: 'rgba(255,255,255,0.05)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: '4px',
+  padding: '4px 6px',
+  color: '#d8d4cb',
+  fontSize: '12px',
+  width: '50px',
+  outline: 'none',
+  fontFamily: 'inherit',
+  textAlign: 'center',
+}
+
 /* ── main app ──────────────────────────────────── */
 
 export default function DesignYourSky() {
@@ -391,10 +451,28 @@ export default function DesignYourSky() {
   const [editName, setEditName] = useState('')
   const [showList, setShowList] = useState(false)
   const [pending, setPending] = useState(null)
+  const [pendingDepth, setPendingDepth] = useState(1)
   const [showGrid, setShowGrid] = useState(true)
   const [axesMode, setAxesMode] = useState('show')
+  const [ctrlHeld, setCtrlHeld] = useState(false)
+  const [showCoordInput, setShowCoordInput] = useState(false)
+  const [coordX, setCoordX] = useState('0')
+  const [coordY, setCoordY] = useState('0')
+  const [coordZ, setCoordZ] = useState('0')
   const controlsRef = useRef()
   const nameInputRef = useRef()
+
+  /* Ctrl key tracking */
+  useEffect(() => {
+    const down = (e) => { if (e.key === 'Control') setCtrlHeld(true) }
+    const up = (e) => { if (e.key === 'Control') setCtrlHeld(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+    }
+  }, [])
 
   /* handlers */
 
@@ -404,19 +482,40 @@ export default function DesignYourSky() {
     setSelected(null)
     setEditName('')
     setPending(null)
+    setPendingDepth(1)
   }, [])
 
   const handlePending = useCallback((point) => {
     setPending({ x: point.x, y: point.y, z: point.z })
+    setPendingDepth(1)
   }, [])
 
   const handleConfirmPending = useCallback(() => {
-    if (pending) handlePlace(pending)
-  }, [pending, handlePlace])
+    if (!pending) return
+    const v = new THREE.Vector3(pending.x, pending.y, pending.z).normalize().multiplyScalar(SKY_R * pendingDepth)
+    handlePlace(v)
+  }, [pending, pendingDepth, handlePlace])
 
   const handleCancelPending = useCallback(() => {
     setPending(null)
+    setPendingDepth(1)
   }, [])
+
+  const handlePendingDepthChange = useCallback((d) => {
+    setPendingDepth(d)
+  }, [])
+
+  const handleCoordCreate = useCallback(() => {
+    const x = parseFloat(coordX)
+    const y = parseFloat(coordY)
+    const z = parseFloat(coordZ)
+    if (isNaN(x) || isNaN(y) || isNaN(z)) return
+    const id = uid()
+    setStars((s) => [...s, { id, x, y, z, name: '', size: 3 }])
+    setCoordX('0')
+    setCoordY('0')
+    setCoordZ('0')
+  }, [coordX, coordY, coordZ])
 
   const handleStarClick = useCallback(
     (star) => {
@@ -489,12 +588,14 @@ export default function DesignYourSky() {
   }, [selected])
 
   const clearAll = useCallback(() => {
+    if (!window.confirm('确定要清空所有星辰和连线吗？')) return
     setStars([])
     setConnections([])
     setSelected(null)
     setConnectFrom(null)
     setEditName('')
     setPending(null)
+    setPendingDepth(1)
     _id = 0
   }, [])
 
@@ -533,11 +634,14 @@ export default function DesignYourSky() {
           onDrag={handleDrag}
           onDragEnd={handleDragEnd}
           pending={pending}
+          pendingDepth={pendingDepth}
           onPending={handlePending}
           onCancelPending={handleCancelPending}
           onConfirmPending={handleConfirmPending}
+          onPendingDepthChange={handlePendingDepthChange}
           showGrid={showGrid}
           axesMode={axesMode}
+          ctrlHeld={ctrlHeld}
         />
       </Canvas>
 
@@ -587,6 +691,7 @@ export default function DesignYourSky() {
                   setMode(val)
                   setConnectFrom(null)
                   setPending(null)
+                  setPendingDepth(1)
                 }}
                 style={btnStyle(mode === val)}
               >
@@ -598,8 +703,22 @@ export default function DesignYourSky() {
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', pointerEvents: 'auto' }}>
           <span style={{ fontSize: '11px', color: '#555', marginRight: '4px' }}>
             {MODE_HINTS[mode]}
-            {mode !== MODES.MOVE && ' · 拖拽旋转视角'}
+            {mode !== MODES.PLACE && mode !== MODES.MOVE && ' · 拖拽旋转视角'}
           </span>
+          <button
+            onClick={() => setShowCoordInput((v) => !v)}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              border: panelBorder,
+              borderRadius: '6px',
+              cursor: 'pointer',
+              background: showCoordInput ? 'rgba(201,165,90,0.15)' : 'rgba(255,255,255,0.04)',
+              color: showCoordInput ? gold : '#888',
+            }}
+          >
+            坐标创建
+          </button>
           <button
             onClick={() => setShowList((v) => !v)}
             style={{
@@ -638,12 +757,87 @@ export default function DesignYourSky() {
               cursor: 'pointer',
               background: 'rgba(255,80,80,0.06)',
               color: '#a55',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.background = 'rgba(255,60,60,0.25)'
+              e.target.style.color = '#ff4444'
+              e.target.style.borderColor = 'rgba(255,60,60,0.5)'
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'rgba(255,80,80,0.06)'
+              e.target.style.color = '#a55'
+              e.target.style.borderColor = 'rgba(255,80,80,0.15)'
             }}
           >
             清空
           </button>
         </div>
       </div>
+
+      {/* ── coordinate input panel ── */}
+      {showCoordInput && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '60px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: panelBg,
+            border: panelBorder,
+            borderRadius: '10px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            backdropFilter: 'blur(16px)',
+            zIndex: 10,
+          }}
+        >
+          <span style={{ fontSize: '11px', color: '#555' }}>坐标</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ color: '#ff4060', fontSize: '10px' }}>X</span>
+            <input
+              type="number"
+              value={coordX}
+              onChange={(e) => setCoordX(e.target.value)}
+              style={coordInputStyle}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ color: '#40ff60', fontSize: '10px' }}>Y</span>
+            <input
+              type="number"
+              value={coordY}
+              onChange={(e) => setCoordY(e.target.value)}
+              style={coordInputStyle}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ color: '#4060ff', fontSize: '10px' }}>Z</span>
+            <input
+              type="number"
+              value={coordZ}
+              onChange={(e) => setCoordZ(e.target.value)}
+              style={coordInputStyle}
+            />
+          </div>
+          <button
+            onClick={handleCoordCreate}
+            style={{
+              padding: '5px 14px',
+              fontSize: '11px',
+              border: '1px solid rgba(201,165,90,0.4)',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              background: 'rgba(201,165,90,0.2)',
+              color: '#c9a55a',
+            }}
+          >
+            创建
+          </button>
+        </div>
+      )}
 
       {/* ── star list sidebar ── */}
       {showList && (
