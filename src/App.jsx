@@ -71,6 +71,34 @@ function SphereGrid() {
   )
 }
 
+/* ── XYZ coordinate axes ─────────────────────────── */
+
+const AXIS_LEN = SKY_R * 1.2
+
+function CoordinateAxes({ blur }) {
+  const opacity = blur ? 0.08 : 0.35
+  return (
+    <group>
+      <Line points={[[-AXIS_LEN, 0, 0], [AXIS_LEN, 0, 0]]} color="#ff4060" lineWidth={1} transparent opacity={opacity} />
+      <Line points={[[0, -AXIS_LEN, 0], [0, AXIS_LEN, 0]]} color="#40ff60" lineWidth={1} transparent opacity={opacity} />
+      <Line points={[[0, 0, -AXIS_LEN], [0, 0, AXIS_LEN]]} color="#4060ff" lineWidth={1} transparent opacity={opacity} />
+      <Html position={[AXIS_LEN + 0.8, 0, 0]} center style={{ pointerEvents: 'none' }}>
+        <span style={{ color: '#ff4060', fontSize: '10px', opacity: blur ? 0.2 : 0.7 }}>X</span>
+      </Html>
+      <Html position={[0, AXIS_LEN + 0.8, 0]} center style={{ pointerEvents: 'none' }}>
+        <span style={{ color: '#40ff60', fontSize: '10px', opacity: blur ? 0.2 : 0.7 }}>Y</span>
+      </Html>
+      <Html position={[0, 0, AXIS_LEN + 0.8]} center style={{ pointerEvents: 'none' }}>
+        <span style={{ color: '#4060ff', fontSize: '10px', opacity: blur ? 0.2 : 0.7 }}>Z</span>
+      </Html>
+      <mesh position={[0, 0, 0]}>
+        <sphereGeometry args={[0.15, 8, 8]} />
+        <meshBasicMaterial color="#888" transparent opacity={blur ? 0.1 : 0.4} />
+      </mesh>
+    </group>
+  )
+}
+
 /* ── invisible click sphere for placing stars ──── */
 
 function ClickSphere({ onPlace, active, pending, onPending, onCancelPending }) {
@@ -217,7 +245,7 @@ function SceneContent({
   onPlace, onStarClick, onStarPointerDown,
   controlsRef, dragging, onDrag, onDragEnd,
   pending, onPending, onCancelPending, onConfirmPending,
-  showGrid,
+  showGrid, axesMode,
 }) {
   const glowTex = useMemo(() => createGlowTexture(), [])
   const { raycaster, camera, gl } = useThree()
@@ -269,6 +297,7 @@ function SceneContent({
 
       <BackgroundStars />
       {showGrid && <SphereGrid />}
+      {axesMode !== 'hidden' && <CoordinateAxes blur={axesMode === 'blur'} />}
       <ClickSphere
         onPlace={onPlace}
         active={mode === 'place'}
@@ -363,6 +392,7 @@ export default function DesignYourSky() {
   const [showList, setShowList] = useState(false)
   const [pending, setPending] = useState(null)
   const [showGrid, setShowGrid] = useState(true)
+  const [axesMode, setAxesMode] = useState('show')
   const controlsRef = useRef()
   const nameInputRef = useRef()
 
@@ -371,10 +401,9 @@ export default function DesignYourSky() {
   const handlePlace = useCallback((point) => {
     const id = uid()
     setStars((s) => [...s, { id, x: point.x, y: point.y, z: point.z, name: '', size: 3 }])
-    setSelected(id)
+    setSelected(null)
     setEditName('')
     setPending(null)
-    setTimeout(() => nameInputRef.current?.focus(), 80)
   }, [])
 
   const handlePending = useCallback((point) => {
@@ -508,6 +537,7 @@ export default function DesignYourSky() {
           onCancelPending={handleCancelPending}
           onConfirmPending={handleConfirmPending}
           showGrid={showGrid}
+          axesMode={axesMode}
         />
       </Canvas>
 
@@ -585,18 +615,18 @@ export default function DesignYourSky() {
             星册 {namedStars.length > 0 && `(${namedStars.length})`}
           </button>
           <button
-            onClick={() => setShowGrid((v) => !v)}
+            onClick={() => setAxesMode((m) => m === 'show' ? 'blur' : m === 'blur' ? 'hidden' : 'show')}
             style={{
               padding: '6px 12px',
               fontSize: '12px',
               border: panelBorder,
               borderRadius: '6px',
               cursor: 'pointer',
-              background: showGrid ? 'rgba(201,165,90,0.15)' : 'rgba(255,255,255,0.04)',
-              color: showGrid ? gold : '#888',
+              background: axesMode !== 'hidden' ? 'rgba(201,165,90,0.15)' : 'rgba(255,255,255,0.04)',
+              color: axesMode !== 'hidden' ? gold : '#888',
             }}
           >
-            坐标轴
+            坐标轴{axesMode === 'blur' ? '(虚化)' : axesMode === 'hidden' ? '(隐藏)' : ''}
           </button>
           <button
             onClick={clearAll}
