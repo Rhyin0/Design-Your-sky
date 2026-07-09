@@ -9,7 +9,7 @@ const SKY_R = 20
 const MODES = { PLACE: 'place', CONNECT: 'connect', MOVE: 'move' }
 const MODE_LABELS = { place: '落星', connect: '连线', move: '移星' }
 const MODE_HINTS = {
-  place: '点击星空放置星辰',
+  place: '点击星空选定位置，确认后落星',
   connect: '依次点击两颗星连线',
   move: '拖拽星辰移动位置',
 }
@@ -73,19 +73,84 @@ function SphereGrid() {
 
 /* ── invisible click sphere for placing stars ──── */
 
-function ClickSphere({ onPlace, active }) {
+function ClickSphere({ onPlace, active, pending, onPending, onCancelPending }) {
   return (
     <mesh
       onClick={(e) => {
         if (!active) return
         e.stopPropagation()
         const p = e.point.clone().normalize().multiplyScalar(SKY_R)
-        onPlace(p)
+        if (!pending) {
+          onPending(p)
+        } else {
+          onCancelPending()
+          onPending(p)
+        }
       }}
     >
       <sphereGeometry args={[SKY_R, 64, 64]} />
       <meshBasicMaterial side={THREE.BackSide} transparent opacity={0} depthWrite={false} />
     </mesh>
+  )
+}
+
+/* ── pending star preview with confirm/cancel ──── */
+
+function PendingStar({ position, onConfirm, onCancel, glowTex }) {
+  return (
+    <group position={[position.x, position.y, position.z]}>
+      <sprite scale={[3.6, 3.6, 1]}>
+        <spriteMaterial
+          map={glowTex}
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+      <mesh>
+        <sphereGeometry args={[0.36, 12, 12]} />
+        <meshBasicMaterial color="#f0e8d8" transparent opacity={0.5} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[0.56, 16, 16]} />
+        <meshBasicMaterial wireframe color="#c9a55a" transparent opacity={0.35} />
+      </mesh>
+      <Html position={[0, -1.2, 0]} center style={{ pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', gap: '6px', whiteSpace: 'nowrap' }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onConfirm() }}
+            style={{
+              padding: '4px 12px',
+              fontSize: '11px',
+              border: '1px solid rgba(201,165,90,0.4)',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              background: 'rgba(201,165,90,0.2)',
+              color: '#c9a55a',
+              backdropFilter: 'blur(8px)',
+            }}
+          >
+            确认
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onCancel() }}
+            style={{
+              padding: '4px 12px',
+              fontSize: '11px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#888',
+              backdropFilter: 'blur(8px)',
+            }}
+          >
+            取消
+          </button>
+        </div>
+      </Html>
+    </group>
   )
 }
 
@@ -151,6 +216,8 @@ function SceneContent({
   stars, connections, mode, selected, connectFrom,
   onPlace, onStarClick, onStarPointerDown,
   controlsRef, dragging, onDrag, onDragEnd,
+  pending, onPending, onCancelPending, onConfirmPending,
+  showGrid,
 }) {
   const glowTex = useMemo(() => createGlowTexture(), [])
   const { raycaster, camera, gl } = useThree()
@@ -201,8 +268,24 @@ function SceneContent({
       />
 
       <BackgroundStars />
-      <SphereGrid />
-      <ClickSphere onPlace={onPlace} active={mode === 'place'} />
+      {showGrid && <SphereGrid />}
+      <ClickSphere
+        onPlace={onPlace}
+        active={mode === 'place'}
+        pending={pending}
+        onPending={onPending}
+        onCancelPending={onCancelPending}
+      />
+
+      {/* pending star preview */}
+      {pending && (
+        <PendingStar
+          position={pending}
+          onConfirm={onConfirmPending}
+          onCancel={onCancelPending}
+          glowTex={glowTex}
+        />
+      )}
 
       {/* connection lines */}
       {connections.map((conn, i) => {
@@ -278,6 +361,8 @@ export default function DesignYourSky() {
   const [dragging, setDragging] = useState(null)
   const [editName, setEditName] = useState('')
   const [showList, setShowList] = useState(false)
+  const [pending, setPending] = useState(null)
+  const [showGrid, setShowGrid] = useState(true)
   const controlsRef = useRef()
   const nameInputRef = useRef()
 
@@ -288,7 +373,20 @@ export default function DesignYourSky() {
     setStars((s) => [...s, { id, x: point.x, y: point.y, z: point.z, name: '', size: 3 }])
     setSelected(id)
     setEditName('')
+    setPending(null)
     setTimeout(() => nameInputRef.current?.focus(), 80)
+  }, [])
+
+  const handlePending = useCallback((point) => {
+    setPending({ x: point.x, y: point.y, z: point.z })
+  }, [])
+
+  const handleConfirmPending = useCallback(() => {
+    if (pending) handlePlace(pending)
+  }, [pending, handlePlace])
+
+  const handleCancelPending = useCallback(() => {
+    setPending(null)
   }, [])
 
   const handleStarClick = useCallback(
@@ -367,6 +465,7 @@ export default function DesignYourSky() {
     setSelected(null)
     setConnectFrom(null)
     setEditName('')
+    setPending(null)
     _id = 0
   }, [])
 
@@ -404,6 +503,11 @@ export default function DesignYourSky() {
           dragging={dragging}
           onDrag={handleDrag}
           onDragEnd={handleDragEnd}
+          pending={pending}
+          onPending={handlePending}
+          onCancelPending={handleCancelPending}
+          onConfirmPending={handleConfirmPending}
+          showGrid={showGrid}
         />
       </Canvas>
 
@@ -452,6 +556,7 @@ export default function DesignYourSky() {
                 onClick={() => {
                   setMode(val)
                   setConnectFrom(null)
+                  setPending(null)
                 }}
                 style={btnStyle(mode === val)}
               >
@@ -478,6 +583,20 @@ export default function DesignYourSky() {
             }}
           >
             星册 {namedStars.length > 0 && `(${namedStars.length})`}
+          </button>
+          <button
+            onClick={() => setShowGrid((v) => !v)}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              border: panelBorder,
+              borderRadius: '6px',
+              cursor: 'pointer',
+              background: showGrid ? 'rgba(201,165,90,0.15)' : 'rgba(255,255,255,0.04)',
+              color: showGrid ? gold : '#888',
+            }}
+          >
+            坐标轴
           </button>
           <button
             onClick={clearAll}
